@@ -42,15 +42,15 @@
 #include <sys/time.h>
 
 #include <ext4.h>
+#include <ext4_mbr.h>
 #include <ext4_mkfs.h>
 #include "../blockdev/linux/file_dev.h"
 #include "../blockdev/windows/file_windows.h"
 
 #define BLOCK_SIZE 1024
 #define FILENAME_LENGTH 256
-#define INITRD_MB 1152
+#define ROOTPART_MB 1151
 
-const char *input_name = NULL;
 /**@brief   Block device handle.*/
 static struct ext4_blockdev *bd;
 /**@brief   Block cache handle.*/
@@ -66,9 +66,11 @@ static struct ext4_mkfs_info info = {
 
 #define MKDEV(major, minor) (((major) << 8) | (minor))
 
-static bool open_filedev(void)
+static bool config_filedev(const char *input_name, uint64_t part_offset, uint64_t part_size)
 {
 	file_dev_name_set(input_name);
+	file_dev_part_offset_set(part_offset);
+	file_dev_part_size_set(part_size);
 	bd = file_dev_get();
 	if (!bd) {
 		puts("open_filedev: fail");
@@ -136,24 +138,24 @@ bool copy_file(char *src_path, char *dest_path)
 	ext4_file dest_file;
 	FILE *src_file = fopen(src_path, "rb");
 	if (!src_file) {
-                printf("fopen '%s' error.\n", src_path);
-                return EXIT_FAILURE;
+		printf("fopen '%s' error.\n", src_path);
+		return EXIT_FAILURE;
 	}
-        fseek(src_file, 0, SEEK_END);
-        int src_len = ftell(src_file);
-        char * src_mem = malloc(src_len);
+	fseek(src_file, 0, SEEK_END);
+	int src_len = ftell(src_file);
+	char * src_mem = malloc(src_len);
 	int err;
 
-        fseek(src_file, 0, SEEK_SET);
+	fseek(src_file, 0, SEEK_SET);
 	if (src_len > 0) {
-        	int read_len = fread(src_mem, src_len, 1, src_file);
-        	fclose(src_file);
-        	if (read_len < 1) {
-                	printf("src fread error file: '%s' read count: %d\n", src_path, read_len);
-        	}
+		int read_len = fread(src_mem, src_len, 1, src_file);
+		fclose(src_file);
+		if (read_len < 1) {
+			printf("src fread error file: '%s' read count: %d\n", src_path, read_len);
+		}
 	}
 
-        err = ext4_fopen(&dest_file, dest_path, "wb");
+	err = ext4_fopen(&dest_file, dest_path, "wb");
 	if (err != EOK) {
 		printf("ext4_open error: %d\n", err);
 		return EXIT_FAILURE;
@@ -198,32 +200,59 @@ bool copy_file_list(char *file_list_path)
 int main(int argc, char **argv)
 {
 	int err;
-
 	char zeros[BLOCK_SIZE];
-
 	unsigned int next_file_address;
-	
-	next_file_address = *((unsigned int *) 0x7F8D);
+	struct ext4_mbr_parts parts;
+	struct ext4_mbr_bdevs mbr_bdevs;
+	const char *input_name = NULL;
 
-	printf("Starting sysa.ext2 at addr 0x%08x\n", next_file_address);
+	next_file_address = *((unsigned int *) 0x8190);
+	printf("Starting ext2 image at addr 0x%08x\n", next_file_address);
 
 	/* Create zeroed out disk image file */
-	input_name = "/boot/sysa.ext2";
+	input_name = "/dev/hda";
 
+	puts("Writing null image...");
 	memset(zeros, 0, BLOCK_SIZE);
 	FILE *ext2file = fopen(input_name, "w");
 	int b;
-	for (b=0; b < (BLOCK_SIZE * INITRD_MB); b++)
+	/* space for mbr and more */
+	for (b=1; b <= 63; b++) {
+		fwrite(zeros, 512, 1, ext2file);
+	}
+
+	for (b=0; b < (BLOCK_SIZE * ROOTPART_MB); b++) {
 		fwrite(zeros, BLOCK_SIZE, 1, ext2file);
+	}
 	fclose(ext2file);
 
-	if (!open_filedev()) {
+	/* mbr write to offset 0. Zero size means entire file */
+	if (!config_filedev(input_name, 0, 0)) {
+		printf("open_filedev error\n");
+		return EXIT_FAILURE;
+	}
+
+	puts("Writing MBR ...");
+	parts.division[0] = 100;
+	parts.division[1] = 0;
+	parts.division[2] = 0;
+	parts.division[3] = 0;
+	ext4_mbr_write(bd, &parts, 0);
+
+	/* Read back MBR to get exact size of partitions */
+	ext4_mbr_scan(bd, &mbr_bdevs);
+
+	/* Configure to write to first partition */
+	if (!config_filedev(input_name,
+			mbr_bdevs.partitions[0].part_offset,
+			mbr_bdevs.partitions[0].part_size)) {
 		printf("open_filedev error\n");
 		return EXIT_FAILURE;
 	}
 
 	/* ext4_dmask_set(DEBUG_ALL); */
 
+	puts("Calling ext4_mkfs...");
 	err = ext4_mkfs(&fs, bd, &info, F_SET_EXT2_V0);
 	if (err != EOK) {
 		printf("ext4_mkfs error: %d\n", err);
@@ -237,7 +266,7 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	printf("Created filesystem with parameters:\n");
+	puts("Created filesystem with parameters:");
 	printf("Size: %"PRIu64"\n", info.len);
 	printf("Block size: %"PRIu32"\n", info.block_size);
 	printf("Blocks per group: %"PRIu32"\n", info.blocks_per_group);
@@ -282,7 +311,7 @@ int main(int argc, char **argv)
 
 	copy_file("/usr/bin/kaem", "/mp/init");
 	copy_file("/sysa/after2.kaem", "/mp/kaem.run");
-	copy_file_list("/sysa/lwext4-1.0.0-lb1/files/fiwix-file-list.txt");
+	copy_file_list("/sysa/lwext4-1.0.0-lb2/files/fiwix-file-list.txt");
 	puts("ext4_dir_mk /mp/tmp");
 	ext4_dir_mk("/mp/tmp");
 	puts("ext4_dir_mk /mp/usr");

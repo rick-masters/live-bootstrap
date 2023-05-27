@@ -26,7 +26,7 @@ create_sysb() {
 
 go_sysb() {
     if [ "${KERNEL_BOOTSTRAP}" = True ]; then
-        kexec-linux "/dev/ram1" "/boot/linux-4.9.10" "/boot/initramfs-sysb.cpio.gz"
+        kexec-linux "/dev/ram0" "/boot/linux-4.9.10" "/boot/initramfs-sysb.cpio.gz"
     else
         # Mount proc for kexec
         mkdir /proc /etc

@@ -60,6 +60,7 @@
 # write
 # src
 # hex0
+# flush_disk
 # internalshell
 
 
@@ -483,7 +484,7 @@ BD 00 00 00 08        # mov ebp, 0x08000000
 89 EC                 # mov esp, ebp
 
 9A 7C 7F 00 00 08 00  # call setup_interrupt_handlers
-EA A1 8A 00 00 08 00  # jmp internalshell
+EA 42 8B 00 00 08 00  # jmp internalshell
 
 
 #----------------------------------------
@@ -2254,6 +2255,11 @@ EA 79 89 00 00 08 00  # jmp hex0_read_loop
 52                    # push edx
 56                    # push esi
 
+83 3D 3E 8B 00 00 00  # cmp [enable_flush], 0
+74 07                 # je clear_args
+9A 82 8A 00 00 08 00  # call flush_disk
+
+#:clear_args
 # clear arguments
 BA 00 00 D0 04        # mov edx, 0x04D00000
 88 02                 # mov [edx], al
@@ -2302,92 +2308,30 @@ BA F6 89 00 00        # mov edx, cmd_env
 59                    # pop ecx
 5B                    # pop ebx
 58                    # pop eax
-CB
-
-
-#------
-#[8A72]
-#:str_build_finished
-#B  u  i  l  d     f  i  n  i  s  h  e  d  . \0
-42 75 69 6C 64 20 66 69 6E 69 73 68 65 64 2E 00
-
-#------
-#[8A82]
-#:str_error_no_writes
-#E  R  R  O  R  :     n  o     h  d  a     w  r  i  t  e  s  ! \0
-45 52 52 4F 52 3A 20 6E 6F 20 68 64 61 20 77 72 69 74 65 73 21 00
-
-#------
-#[8A98]
-#:str_dev_hda
-#/  d  e  v  /  h  d  a \0
-2F 64 65 76 2F 68 64 61 00
+CB                    # retf
 
 
 #------------------------------------------------------------
-#[8AA1]
-#:internalshell
-# Start reading stdin from sector 22, cyl 0, head 2  (i.e. sector 148)
-C7 05 00 00 00 01 16 00 02 00  # mov word [0x01000000], 0x00000008
-# start at "end of sector" to trigger an initial sector read
-66 C7 05 04 00 00 01 FF 01  # mov word [0x01000004], 0x01FF
-66 C7 05 00 01 02 00 2F 00  # mov [0x00020100], 0x002F     ; proc[0].cwd = "/"
-66 C7 05 00 11 02 00 2F 00  # mov [0x00021100], 0x002F     ; proc[1].cwd = "/"
-
-# clear file descriptors for process 0
-BF 00 02 02 00              # mov edi, 0x00020200
-B9 00 0E 00 00              # mov ecx, 0x00000E00
-31 C0                       # xor eax, eax
-F3 AA                       # rep stosb
-
-# read from stdin
-31 DB                 # xor ebx, ebx
-
-#:process_command
-9A E3 87 00 00 08 00  # call read
-3C 00                 # cmp al, 0
-74 23                 # je build_finished
-
-#:check_src_command
-3C 73                 # cmp al, 's'
-75 09                 # jne check_hex0_command
-
-#:handle_src_command
-9A 29 88 00 00 08 00  # call src
-EB E8                 # jmp process_command
-
-#:check_hex0_command
-3C 68                 # cmp al, 'h'
-75 09                 # jne call_handle_other_command
-
-#:handle_hex0_command
-9A E6 88 00 00 08 00  # call hex0
-EB DB                 # jmp process_command
-
-#:call_handle_other_command
-9A FA 89 00 00 08 00  # call handle_other_command
-EB D2                 # jmp process_command
-
-#:build_finished
-BE 72 8A 00 00        # mov esi, str_build_finished
-9A 8F 80 00 00 08 00  # call console_puts
-
+#[8A82]
+#:flush_disk
+50                    # push eax
 # copy memory file /dev/hda to the boot disk
-BB 98 8A 00 00        # mov ebx, str_dev_hda
+BB 35 8B 00 00        # mov ebx, str_dev_hda
 9A 13 83 00 00 08 00  # call find_file
 83 F8 FF              # cmp eax, -1
-75 17                 # jne ok_exit
+75 17                 # jne ok_flush
 
 #:error_exit
-BE 82 8A 00 00        # mov esi, str_error_no_write
+BE 1F 8B 00 00        # mov esi, str_error_no_write
 9A 8F 80 00 00 08 00  # call console_puts
 
 # one space to flush last line
 B0 20                 # mov al, 20
 9A 6F 80 00 00 08 00  # call console_putc
-EB 62                 # jmp shell_reboot
+58                    # pop eax
+CB                    # retf
 
-#:ok_exit
+#:ok_flush
 # get file address to read
 C1 E0 04              # shl eax, 04
 05 00 00 00 01        # add eax, 0x01000000
@@ -2424,19 +2368,103 @@ BE 00 A0 00 00        # mov esi, 0x000A000
 B8 01 00 00 00        # mov eax, 0x0001          ; num_sectors = 1
 9A BD 80 00 00 08 00  # call write_sectors
 5E                    # pop esi
+
 81 EB 00 02 00 00     # sub ebx, 0x200           ; bytes_to_write -= 512
+
 7F D7                 # jg sector_loop
 
 B0 20                 # mov al, 20
 9A 6F 80 00 00 08 00  # call console_putc
+58                    # pop eax
+CB                    # retf
+
+
+#------
+#[8B0F]
+#:str_build_finished
+#B  u  i  l  d     f  i  n  i  s  h  e  d  . \0
+42 75 69 6C 64 20 66 69 6E 69 73 68 65 64 2E 00
+
+#------
+#[8B1F]
+#:str_error_no_writes
+#E  R  R  O  R  :     n  o     h  d  a     w  r  i  t  e  s  ! \0
+45 52 52 4F 52 3A 20 6E 6F 20 68 64 61 20 77 72 69 74 65 73 21 00
+
+#------
+#[8B35]
+#:str_dev_hda
+#/  d  e  v  /  h  d  a \0
+2F 64 65 76 2F 68 64 61 00
+
+#------
+#[8B3E]
+#:enable_flush
+00 00 00 00
+
+#------------------------------------------------------------
+#[8B42]
+#:internalshell
+# Start reading stdin from sector 23, cyl 0, head 2  (i.e. sector 149)
+C7 05 00 00 00 01 17 00 02 00  # mov word [0x01000000], 0x00000008
+# start at "end of sector" to trigger an initial sector read
+66 C7 05 04 00 00 01 FF 01  # mov word [0x01000004], 0x01FF
+66 C7 05 00 01 02 00 2F 00  # mov [0x00020100], 0x002F     ; proc[0].cwd = "/"
+66 C7 05 00 11 02 00 2F 00  # mov [0x00021100], 0x002F     ; proc[1].cwd = "/"
+
+# clear file descriptors for process 0
+BF 00 02 02 00              # mov edi, 0x00020200
+B9 00 0E 00 00              # mov ecx, 0x00000E00
+31 C0                       # xor eax, eax
+F3 AA                       # rep stosb
+
+# read from stdin
+31 DB                 # xor ebx, ebx
+
+#:process_command
+9A E3 87 00 00 08 00  # call read
+3C 00                 # cmp al, 0
+74 37                 # je build_finished
+
+#:check_src_command
+3C 73                 # cmp al, 's'
+75 09                 # jne check_hex0_command
+
+# handle src command
+9A 29 88 00 00 08 00  # call src
+EB E8                 # jmp process_command
+
+#:check_hex0_command
+3C 68                 # cmp al, 'h'
+75 09                 # jne check_flush_command
+
+# handle hex0 command
+9A E6 88 00 00 08 00  # call hex0
+EB DB                 # jmp process_command
+
+#:check_flush_command
+3C 66                 # cmp al, 'f'
+75 0F                 # jne call_handle_other_command
+
+#:handle_flush_command
+9A E3 87 00 00 08 00  # call read    ; read the newline
+FF 05 3E 8B 00 00   # inc enable_flush
+EB C8                 # jmp process_command
+
+#:call_handle_other_command
+9A FA 89 00 00 08 00  # call handle_other_command
+EB BF                 # jmp process_command
+
+#:build_finished
+BE 0F 8B 00 00        # mov esi, str_build_finished
+9A 8F 80 00 00 08 00  # call console_puts
+
+9A 82 8A 00 00 08 00  # call flush_disk
 
 #:shell_reboot
 EA CD 80 00 00 08 00  # jmp reboot
 
 # sector padding
-00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00

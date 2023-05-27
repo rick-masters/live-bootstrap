@@ -6,7 +6,6 @@
 #include "multiboot1.h"
 
 #define MULTIBOOT_MAGIC 0x2BADB002
-#define INITRD_MB 1152
 
 int main() {
 	/* Read the kernel */
@@ -77,7 +76,7 @@ int main() {
 	puts("Preparing multiboot info for kernel...");
 
 	char cmdline[256];
-	sprintf(cmdline, "fiwix console=/dev/ttyS0 root=/dev/ram0 ramdisksize=%d initrd=sysa.ext2 kexec_proto=linux kexec_size=67000 kexec_cmdline=\"init=/init console=ttyS0\"", INITRD_MB * 1024);
+	sprintf(cmdline, "fiwix console=/dev/ttyS0 root=/dev/hda1 rootfstype=ext2 kexec_proto=linux kexec_size=67000 kexec_cmdline=\"init=/init console=ttyS0\"");
 	char * boot_loader_name = "kexec-fiwix";
 
 	unsigned int next_avail_mem = 0x9800;
@@ -100,16 +99,7 @@ int main() {
 	strcpy((char *) next_avail_mem, cmdline);
 	next_avail_mem += (strlen(cmdline) + 1);
 
-	/* Set ramdrive info */
-	pmultiboot_info->mods_count = 1;
-	pmultiboot_info->mods_addr = next_avail_mem;
-	multiboot_module_t *pmultiboot_module = (multiboot_module_t *) next_avail_mem;
-	pmultiboot_module->mod_start = 0x1C6000;
-	pmultiboot_module->mod_end = 0x1C6000 + (INITRD_MB * 1024 * 1024);
-	next_avail_mem += sizeof(multiboot_module_t);
-	pmultiboot_module->cmdline = next_avail_mem;
-	strcpy((char *) next_avail_mem, "sysa.ext2");
-	next_avail_mem += (strlen("sysa.ext2") + 1);
+	pmultiboot_info->mods_count = 0;
 
 	/* Set memory map info */
 	pmultiboot_info->mmap_addr = next_avail_mem;
@@ -170,46 +160,19 @@ int main() {
 	unsigned int dummy = 0;
 	unsigned int multiboot_info_num = (unsigned int) pmultiboot_info;
 
-	int filenum;
-	unsigned int filename_addr;
-	for (filenum = 4, filename_addr = 0x201000; filenum <= 14335; filenum++, filename_addr += 1024) {
-		if (!strcmp((char *) filename_addr, "/boot/sysa.ext2")) {
-			printf("Found image at filenum %d\n", filenum);
-			break;
-		}
-	}
-
-	unsigned int initrd_src = *((unsigned int *) (0x01000000 + (16 * filenum) + 4));
-	unsigned int initrd_len = *((unsigned int *) (0x01000000 + (16 * filenum) + 8));
-	printf("initrd_src: 0x%08x\n", initrd_src);
-	printf("initrd_len: 0x%08x\n", initrd_len);
 	printf("Preparing trampoline...\n");
 
-	/* The ramdrive needs to be written to a location that would overwrite this program.
-	 * Therfore, the code that copies the ram drive and jumps to the kernel needs to be
-	 * run from a safe location. So, we put that code into an array variable and
-	 * copy the code (called a "trampoline") to a safe location and then jump to it.
-	 * The 0x00000000 values below are place holders which are set below
-	 */
+	/* We create a memory buffer so we can set the multiboot data */
 	char trampoline[] = {
-		0xBE, 0x00, 0x00, 0x00, 0x00,   /* mov esi, 0x00000000 */
-		0xBF, 0x00, 0x00, 0x00, 0x00,   /* mov edi, 0x00000000 */
-		0xB9, 0x00, 0x00, 0x00, 0x00,   /* mov ecx, 0x00000000 */
-		0xFC,                           /* cld                 */
-		0xF3, 0xA4,                     /* rep movsb           */
 		0xB8, 0x00, 0x00, 0x00, 0x00,   /* mov eax, 0x00000000 */
 		0xBB, 0x00, 0x00, 0x00, 0x00,   /* mov ebx, 0x00000000 */
 		0xEA, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00  /* jmp far 0x0008:0x00000000 */
 	};
 
 	/* Set place holder values */
-	*((unsigned int *) &trampoline[1])  = initrd_src;
-	*((unsigned int *) &trampoline[6])  = 0x001C6000;
-	*((unsigned int *) &trampoline[11]) = INITRD_MB * 1024 * 1024;
-	*((unsigned int *) &trampoline[19])  = magic;
-	*((unsigned int *) &trampoline[24])  = multiboot_info_num;
-	*((unsigned int *) &trampoline[29])  = e_entry;
-
+	*((unsigned int *) &trampoline[1])  = magic;
+	*((unsigned int *) &trampoline[6])  = multiboot_info_num;
+	*((unsigned int *) &trampoline[11])  = e_entry;
 	memcpy((void *)0x4000, trampoline, sizeof(trampoline));
 
 	printf("kexec-fiwix: jumping to trampoline...\n");

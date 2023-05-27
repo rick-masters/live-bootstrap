@@ -120,9 +120,9 @@ class SysA(SysGeneral):
 
     def create_fiwix_file_list(self):
         """Create a list of files to populate Fiwix file system"""
-        file_list_path = os.path.join(self.tmp_dir, 'sysa', 'lwext4-1.0.0-lb1',
+        file_list_path = os.path.join(self.tmp_dir, 'sysa', 'lwext4-1.0.0-lb2',
                                       'files', 'fiwix-file-list.txt')
-        shutil.copyfile(os.path.join(self.tmp_dir, 'sysa', 'lwext4-1.0.0-lb1',
+        shutil.copyfile(os.path.join(self.tmp_dir, 'sysa', 'lwext4-1.0.0-lb2',
                                      'files', 'early-artifacts-needed-after-fiwix.txt'),
                         file_list_path)
 
@@ -177,6 +177,7 @@ class SysA(SysGeneral):
         shutil.move('stage0-posix', 'sysa')
         shutil.copyfile(os.path.join('sysa', 'after.kaem'), 'after.kaem')
         self.output_file(image_file, 'after.kaem')
+        image_file.write('src 0 /dev\n'.encode())
 
         # Add commands to kick off stage0-posix
         cmd = ' '.join(['hex0',
@@ -189,6 +190,8 @@ class SysA(SysGeneral):
         image_file.write(cmd.encode())
         cmd = ' '.join(['./bootstrap-seeds/POSIX/x86/kaem-optional-seed', './kaem.x86\n'])
         image_file.write(cmd.encode())
+        image_file.write('f\n'.encode())
+        image_file.write('/usr/bin/kexec-fiwix dummyarg\n'.encode())
 
         os.chdir(save_cwd)
 

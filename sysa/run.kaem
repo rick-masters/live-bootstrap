@@ -63,7 +63,7 @@ if match x${BUILD_FIWIX} xTrue; then
     cd ..
 
     # ext2 file system library for Fiwix
-    pkg="lwext4-1.0.0-lb1"
+    pkg="lwext4-1.0.0-lb2"
     cd ${pkg}
     kaem --verbose --file ${pkg}.kaem
     cd ..
@@ -78,9 +78,6 @@ fi
 if match x${KERNEL_BOOTSTRAP} xTrue; then
     # Build the ext2 image
     make_fiwix_initrd
-
-    # Boot Fiwix
-    kexec-fiwix
 else
     exec kaem --verbose --file run-after-fiwix.kaem
 fi
